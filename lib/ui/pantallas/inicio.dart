@@ -11,6 +11,7 @@ import '../widgets/grafica.dart';
 import 'ajustes.dart';
 import 'lista.dart';
 import 'movimiento.dart';
+import 'trabajo.dart';
 
 class _Datos {
   final Periodo periodo;
@@ -23,8 +24,10 @@ class _Datos {
   final List<PuntoSerie> serie;
   final Map<int, Categoria> categorias;
   final bool recordarCopia;
+  final ResumenTrabajo trabajo;
+  final Map<int, Cliente> clientes;
   const _Datos(this.periodo, this.resumen, this.anterior, this.saldo, this.juego, this.movimientos, this.porCategoria,
-      this.serie, this.categorias, this.recordarCopia);
+      this.serie, this.categorias, this.recordarCopia, this.trabajo, this.clientes);
 }
 
 enum _Vista { movimientos, categorias, grafica }
@@ -83,6 +86,8 @@ class _PantallaInicioState extends State<PantallaInicio> {
       serieF,
       repo.categorias(incluirArchivadas: true),
       _hayQueRecordarCopia(),
+      repo.resumenTrabajo(p),
+      repo.clientes(incluirArchivados: true),
     ]);
     if (!mounted || pedido != _pedido) return; // llegó una consulta más nueva
     setState(() => _datos = _Datos(
@@ -96,6 +101,8 @@ class _PantallaInicioState extends State<PantallaInicio> {
           r[6] as List<PuntoSerie>,
           {for (final c in r[7] as List<Categoria>) c.id!: c},
           r[8] as bool,
+          r[9] as ResumenTrabajo,
+          {for (final c in r[10] as List<Cliente>) c.id!: c},
         ));
   }
 
@@ -202,6 +209,7 @@ class _PantallaInicioState extends State<PantallaInicio> {
                 slivers: [
                   SliverToBoxAdapter(child: _selector()),
                   SliverToBoxAdapter(child: _resumen(d)),
+                  SliverToBoxAdapter(child: _trabajo(d.trabajo)),
                   if (d.juego.hayDatos) SliverToBoxAdapter(child: _juego(d.juego)),
                   if (d.recordarCopia) SliverToBoxAdapter(child: _recordatorioCopia()),
                   SliverToBoxAdapter(child: _pestanas()),
@@ -337,6 +345,49 @@ class _PantallaInicioState extends State<PantallaInicio> {
     );
   }
 
+  Widget _trabajo(ResumenTrabajo w) {
+    final t = Theme.of(context).textTheme;
+    void abrirTrabajo() => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const PantallaTrabajo()));
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+      child: Card(
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          key: const ValueKey('abrir-trabajo'),
+          onTap: abrirTrabajo,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 14, 12, 14),
+            child: Row(children: [
+              Icon(Icons.work_rounded, color: colorTipo(context, true), size: 34),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Text('Trabajo', style: t.titleMedium?.copyWith(fontWeight: FontWeight.bold)),
+                  Text(
+                    w.cobros == 0
+                        ? 'Anota lo que te pagan tus clientes'
+                        : 'Cobraste ${formatearCOP(w.cobrado)} · ${w.clientes} cliente${w.clientes == 1 ? '' : 's'}',
+                    key: const ValueKey('inicio-trabajo'),
+                    style: t.bodyMedium,
+                  ),
+                ]),
+              ),
+              FilledButton.tonalIcon(
+                key: const ValueKey('inicio-anotar-cobro'),
+                style: FilledButton.styleFrom(minimumSize: const Size(0, 44)),
+                onPressed: () => Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => const PantallaMovimiento(tipo: TipoMovimiento.ingreso, deTrabajo: true)),
+                ),
+                icon: const Icon(Icons.add_rounded),
+                label: const Text('Cobro'),
+              ),
+            ]),
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _juego(BalanceJuego j) {
     final t = Theme.of(context).textTheme;
     final gano = j.neto >= 0;
@@ -454,7 +505,8 @@ class _PantallaInicioState extends State<PantallaInicio> {
             );
           }
           final m = it as Movimiento;
-          return FilaMovimiento(key: ValueKey('mov-${m.id}'), m: m, categoria: d.categorias[m.categoriaId], onTap: () => _abrir(m));
+          return FilaMovimiento(
+              key: ValueKey('mov-${m.id}'), m: m, categoria: d.categorias[m.categoriaId], cliente: d.clientes[m.clienteId], onTap: () => _abrir(m));
         },
       ),
     ];

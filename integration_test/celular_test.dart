@@ -5,7 +5,9 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:contabilidad_mama/core/fechas.dart';
 import 'package:contabilidad_mama/datos/abrir_bd.dart';
+import 'package:contabilidad_mama/datos/base_datos.dart';
 import 'package:contabilidad_mama/datos/modelos.dart';
 import 'package:contabilidad_mama/datos/repositorio.dart';
 import 'package:contabilidad_mama/main.dart' as app;
@@ -72,6 +74,38 @@ void main() {
       final db = await abrirBDCifrada(almacen);
       await db.close();
       expect(await almacen.leer(kLlaveBD), matches(RegExp(r'^[0-9a-f]{64}$')));
+    });
+
+    testWidgets('actualizar de la 1.0.0 a la 1.1.0 con la base cifrada: no se pierde nada', (tester) async {
+      final almacen = AlmacenKeystore();
+      final llave = await obtenerLlaveBD(almacen, existeBD: false);
+      // Base cifrada con el esquema de la 1.0.0, como la tiene hoy el celular
+      final v1 = await cipher.openDatabase(await rutaBD(),
+          password: "x'$llave'", version: 1, onConfigure: configurarBD, onCreate: (db, _) => crearEsquemaV1(db), singleInstance: false);
+      await v1.insert('movimientos', {
+        'tipo': 'ingreso', 'monto': 1300000, 'fecha': '2026-11-01', 'descripcion': 'Quincena',
+        'creado_en': '2026-11-01T10:00:00Z', 'actualizado_en': '2026-11-01T10:00:00Z',
+      });
+      await v1.insert('movimientos', {
+        'tipo': 'egreso', 'monto': 420000, 'fecha': '2026-11-02', 'descripcion': 'Mercado',
+        'creado_en': '2026-11-02T10:00:00Z', 'actualizado_en': '2026-11-02T10:00:00Z',
+      });
+      final antes = await v1.rawQuery('SELECT * FROM movimientos ORDER BY id');
+      await v1.close();
+
+      // La app nueva abre la misma base: migra a v2 sin tocar nada
+      final db = await abrirBDCifrada(almacen);
+      expect(await db.getVersion(), 2);
+      final despues = await db.rawQuery('SELECT * FROM movimientos ORDER BY id');
+      for (var i = 0; i < antes.length; i++) {
+        expect({...despues[i]}..remove('cliente_id'), antes[i]);
+      }
+      final repo = Repositorio(db);
+      final rosa = await repo.clienteParaNombre('Doña Rosa');
+      await repo.agregarMovimiento(Movimiento(tipo: TipoMovimiento.ingreso, monto: 80000, fecha: '2026-11-05', clienteId: rosa.id));
+      expect((await repo.resumen(Periodo.de(TipoPeriodo.mes, '2026-11-01'))).balance, 1300000 - 420000 + 80000);
+      expect(await repo.integridadOk(), isTrue);
+      await db.close();
     });
 
     testWidgets('si la llave desaparece, NO se crea una base nueva encima', (tester) async {

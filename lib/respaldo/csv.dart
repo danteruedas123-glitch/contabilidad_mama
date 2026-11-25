@@ -22,9 +22,9 @@ String celdaSegura(String valor) {
 }
 
 /// Genera el CSV (con BOM para que Excel lea bien las tildes).
-List<int> generarCsv(List<Movimiento> movimientos, Map<int, Categoria> categorias) {
+List<int> generarCsv(List<Movimiento> movimientos, Map<int, Categoria> categorias, {Map<int, Cliente> clientes = const {}}) {
   final b = StringBuffer('﻿');
-  b.writeln(['Fecha', 'Tipo', 'Valor', 'Valor con signo', 'Categoría', '¿En qué?', 'Medio de pago', 'Nota'].join(_sep));
+  b.writeln(['Fecha', 'Tipo', 'Valor', 'Valor con signo', 'Categoría', 'Cliente', '¿En qué?', 'Medio de pago', 'Nota'].join(_sep));
   for (final m in movimientos) {
     b.writeln([
       m.fecha,
@@ -32,6 +32,7 @@ List<int> generarCsv(List<Movimiento> movimientos, Map<int, Categoria> categoria
       '${m.monto}',
       '${m.conSigno}',
       celdaSegura(categorias[m.categoriaId]?.nombre ?? 'Sin categoría'),
+      celdaSegura(clientes[m.clienteId]?.nombre ?? ''),
       celdaSegura(m.descripcion),
       celdaSegura(m.medio?.nombre ?? ''),
       celdaSegura(m.nota),

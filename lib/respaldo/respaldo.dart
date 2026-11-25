@@ -21,10 +21,12 @@ import '../datos/repositorio.dart';
 import '../seguridad/cripto.dart';
 
 const formatoRespaldo = 'contabilidad-mama';
-const versionRespaldo = 1;
+/// v1: categorías y movimientos. v2: además clientes. Se siguen leyendo las v1.
+const versionRespaldo = 2;
 const tamanoMaximoRespaldo = 40 * 1024 * 1024; // 40 MB
 const maxMovimientosRespaldo = 1000000;
 const maxCategoriasRespaldo = 1000;
+const maxClientesRespaldo = 50000;
 const iteracionesMin = 10000;
 const iteracionesMax = 2000000;
 
@@ -63,6 +65,7 @@ class ServicioRespaldo {
     if (error != null) throw ErrorRespaldo(error);
 
     final cats = await _db.query('categorias', orderBy: 'id');
+    final clientes = await _db.query('clientes', orderBy: 'id');
     final movs = await _db.query('movimientos', orderBy: 'id');
     final sumas = await _sumas(_db);
     final interno = utf8.encode(jsonEncode({
@@ -70,6 +73,7 @@ class ServicioRespaldo {
       'esquema': versionEsquema,
       'creado': (ahora ?? DateTime.now()).toUtc().toIso8601String(),
       'categorias': cats,
+      'clientes': clientes,
       'movimientos': movs,
       'control': sumas,
     }));
@@ -165,11 +169,17 @@ class ServicioRespaldo {
   Future<void> _restaurarEnTransaccion(Map<String, dynamic> d, Map<String, dynamic> control) async {
     await _db.transaction((txn) async {
       await txn.delete('movimientos');
+      await txn.delete('clientes');
       await txn.delete('categorias');
-      await txn.delete('sqlite_sequence', where: "name IN ('movimientos','categorias')");
+      await txn.delete('sqlite_sequence', where: "name IN ('movimientos','categorias','clientes')");
       final b = txn.batch();
       for (final c in (d['categorias'] as List)) {
         b.insert('categorias', _soloColumnas(c as Map, _colsCategoria));
+      }
+      // Las copias v1 no traen clientes.
+      for (final c in (d['clientes'] as List? ?? const [])) {
+        // La clave se recalcula: no se confía en la que traiga el archivo.
+        b.insert('clientes', {..._soloColumnas(c as Map, _colsCliente), 'clave': claveNombre(c['nombre'] as String)});
       }
       for (final m in (d['movimientos'] as List)) {
         b.insert('movimientos', _soloColumnas(m as Map, _colsMovimiento));
@@ -186,8 +196,9 @@ class ServicioRespaldo {
   }
 
   static const _colsCategoria = ['id', 'nombre', 'tipo', 'icono', 'color', 'orden', 'archivada'];
+  static const _colsCliente = ['id', 'nombre', 'telefono', 'nota', 'archivado', 'creado_en'];
   static const _colsMovimiento = [
-    'id', 'tipo', 'monto', 'categoria_id', 'descripcion', 'nota', 'medio', 'fecha',
+    'id', 'tipo', 'monto', 'categoria_id', 'cliente_id', 'descripcion', 'nota', 'medio', 'fecha',
     'creado_en', 'actualizado_en', 'eliminado_en',
   ];
 
@@ -217,6 +228,23 @@ class ServicioRespaldo {
       }
     }
 
+    final clientes = d['clientes'] ?? const [];
+    if (clientes is! List || clientes.length > maxClientesRespaldo) throw const ErrorRespaldo('La copia está dañada');
+    final idsCli = <int>{};
+    final nombresCli = <String>{};
+    for (final c in clientes) {
+      try {
+        if (c is! Map) throw const FormatException();
+        final cli = Cliente.deMapa(c.cast<String, Object?>());
+        final id = cli.id;
+        if (id == null || id <= 0 || !idsCli.add(id)) throw const FormatException();
+        if (validarCliente(cli) != null || !nombresCli.add(claveNombre(cli.nombre))) throw const FormatException();
+        if (c['creado_en'] is! String || DateTime.tryParse(c['creado_en'] as String) == null) throw const FormatException();
+      } catch (_) {
+        throw const ErrorRespaldo('La copia tiene un cliente dañado');
+      }
+    }
+
     var ingresos = 0, egresos = 0, cantidad = 0;
     final idsMov = <int>{};
     for (final m in movs) {
@@ -227,6 +255,7 @@ class ServicioRespaldo {
         if (id == null || id <= 0 || !idsMov.add(id)) throw const FormatException();
         if (validarMovimiento(mov) != null) throw const FormatException();
         if (mov.categoriaId != null && !idsCat.contains(mov.categoriaId)) throw const FormatException();
+        if (mov.clienteId != null && !idsCli.contains(mov.clienteId)) throw const FormatException();
         for (final k in ['creado_en', 'actualizado_en']) {
           if (m[k] is! String || DateTime.tryParse(m[k] as String) == null) throw const FormatException();
         }

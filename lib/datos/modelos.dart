@@ -114,6 +114,7 @@ class Movimiento {
   final TipoMovimiento tipo;
   final int monto; // pesos enteros, siempre > 0
   final int? categoriaId;
+  final int? clienteId; // a quién se le cobró (trabajo); opcional
   final String descripcion; // "¿en qué?" — libre
   final String nota;
   final MedioPago? medio;
@@ -127,6 +128,7 @@ class Movimiento {
     required this.tipo,
     required this.monto,
     this.categoriaId,
+    this.clienteId,
     this.descripcion = '',
     this.nota = '',
     this.medio,
@@ -144,6 +146,8 @@ class Movimiento {
     int? monto,
     int? categoriaId,
     bool quitarCategoria = false,
+    int? clienteId,
+    bool quitarCliente = false,
     String? descripcion,
     String? nota,
     MedioPago? medio,
@@ -155,6 +159,7 @@ class Movimiento {
         tipo: tipo ?? this.tipo,
         monto: monto ?? this.monto,
         categoriaId: quitarCategoria ? null : (categoriaId ?? this.categoriaId),
+        clienteId: quitarCliente ? null : (clienteId ?? this.clienteId),
         descripcion: descripcion ?? this.descripcion,
         nota: nota ?? this.nota,
         medio: quitarMedio ? null : (medio ?? this.medio),
@@ -169,6 +174,7 @@ class Movimiento {
         'tipo': tipo.clave,
         'monto': monto,
         'categoria_id': categoriaId,
+        'cliente_id': clienteId,
         'descripcion': descripcion,
         'nota': nota,
         'medio': medio?.clave,
@@ -180,6 +186,7 @@ class Movimiento {
         tipo: TipoMovimiento.desde(m['tipo'] as String),
         monto: m['monto'] as int,
         categoriaId: m['categoria_id'] as int?,
+        clienteId: m['cliente_id'] as int?,
         descripcion: (m['descripcion'] as String?) ?? '',
         nota: (m['nota'] as String?) ?? '',
         medio: MedioPago.desde(m['medio'] as String?),
@@ -194,6 +201,87 @@ class Movimiento {
 const maxDescripcion = 120;
 const maxNota = 500;
 const maxNombreCategoria = 30;
+const maxNombreCliente = 60;
+const maxTelefono = 20;
+const maxNotaCliente = 300;
+
+/// Un cliente de mamá (a quien le cobra por su trabajo).
+class Cliente {
+  final int? id;
+  final String nombre;
+  final String telefono;
+  final String nota;
+  final bool archivado;
+  final String? creadoEn;
+
+  const Cliente({this.id, required this.nombre, this.telefono = '', this.nota = '', this.archivado = false, this.creadoEn});
+
+  Cliente copiar({String? nombre, String? telefono, String? nota, bool? archivado}) => Cliente(
+        id: id,
+        nombre: nombre ?? this.nombre,
+        telefono: telefono ?? this.telefono,
+        nota: nota ?? this.nota,
+        archivado: archivado ?? this.archivado,
+        creadoEn: creadoEn,
+      );
+
+  Map<String, Object?> aMapa() => {
+        if (id != null) 'id': id,
+        'nombre': nombre,
+        'clave': claveNombre(nombre),
+        'telefono': telefono,
+        'nota': nota,
+        'archivado': archivado ? 1 : 0,
+        if (creadoEn != null) 'creado_en': creadoEn,
+      };
+
+  factory Cliente.deMapa(Map<String, Object?> m) => Cliente(
+        id: m['id'] as int?,
+        nombre: m['nombre'] as String,
+        telefono: (m['telefono'] as String?) ?? '',
+        nota: (m['nota'] as String?) ?? '',
+        archivado: (m['archivado'] as int? ?? 0) == 1,
+        creadoEn: m['creado_en'] as String?,
+      );
+}
+
+/// Deja el nombre como se debe guardar: sin espacios de más.
+String limpiarNombre(String s) => s.trim().replaceAll(RegExp(r'\s+'), ' ');
+
+const _sinTilde = {'á': 'a', 'é': 'e', 'í': 'i', 'ó': 'o', 'ú': 'u', 'ü': 'u', 'ñ': 'n', 'à': 'a', 'è': 'e', 'ì': 'i', 'ò': 'o', 'ù': 'u'};
+
+/// Para reconocer al mismo cliente aunque lo escriba distinto:
+/// "DOÑA  Rosa", "doña rosa" y "Dona Rosa" → "dona rosa".
+String claveNombre(String s) =>
+    limpiarNombre(s).toLowerCase().split('').map((c) => _sinTilde[c] ?? c).join();
+
+String? validarCliente(Cliente c) {
+  final n = limpiarNombre(c.nombre);
+  if (n.isEmpty) return 'Escribe el nombre del cliente';
+  if (n.length > maxNombreCliente) return 'El nombre es muy largo (máximo $maxNombreCliente letras)';
+  if (c.telefono.length > maxTelefono || !RegExp(r'^[0-9+ ()-]*$').hasMatch(c.telefono)) {
+    return 'El teléfono solo puede tener números';
+  }
+  if (c.nota.length > maxNotaCliente) return 'La nota es muy larga (máximo $maxNotaCliente letras)';
+  return null;
+}
+
+/// Lo que ha pagado un cliente en un período.
+class TotalCliente {
+  final Cliente cliente;
+  final int total;
+  final int cobros;
+  final String? ultimaFecha;
+  const TotalCliente(this.cliente, this.total, this.cobros, this.ultimaFecha);
+}
+
+/// Resumen del trabajo en un período: lo cobrado a clientes.
+class ResumenTrabajo {
+  final int cobrado;
+  final int cobros;
+  final int clientes;
+  const ResumenTrabajo(this.cobrado, this.cobros, this.clientes);
+}
 
 /// Revisa un movimiento antes de guardarlo. Devuelve el error o null.
 /// La base de datos vuelve a revisar lo mismo con CHECKs (defensa en capas).

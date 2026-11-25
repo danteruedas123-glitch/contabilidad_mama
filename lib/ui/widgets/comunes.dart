@@ -44,15 +44,19 @@ class TextoMonto extends StatelessWidget {
 class FilaMovimiento extends StatelessWidget {
   final Movimiento m;
   final Categoria? categoria;
+  final Cliente? cliente;
   final VoidCallback? onTap;
   final bool mostrarFecha;
-  const FilaMovimiento({super.key, required this.m, required this.categoria, this.onTap, this.mostrarFecha = false});
+  const FilaMovimiento({super.key, required this.m, required this.categoria, this.cliente, this.onTap, this.mostrarFecha = false});
 
   @override
   Widget build(BuildContext context) {
-    final titulo = m.descripcion.isNotEmpty ? m.descripcion : (categoria?.nombre ?? 'Sin categoría');
+    final nombreCat = categoria?.nombre ?? 'Sin categoría';
+    // Título: lo que escribió; si no, el cliente; si no, la categoría.
+    final titulo = m.descripcion.isNotEmpty ? m.descripcion : (cliente?.nombre ?? nombreCat);
     final partes = <String>[
-      if (m.descripcion.isNotEmpty) categoria?.nombre ?? 'Sin categoría',
+      if (titulo != nombreCat) nombreCat,
+      if (cliente != null && titulo != cliente!.nombre) cliente!.nombre,
       if (m.medio != null) m.medio!.nombre,
       if (mostrarFecha) m.fecha,
     ];

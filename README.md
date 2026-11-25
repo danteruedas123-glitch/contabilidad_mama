@@ -7,6 +7,7 @@ App Android (Flutter) para llevar la contabilidad personal de mamá: lo que **en
 - **Anotar rápido**: solo el valor es obligatorio. Categoría, "¿en qué?", medio de pago (Efectivo, Nequi, Daviplata, banco, tarjeta) y nota son opcionales.
 - **El valor se escribe como sea**: `50000`, `50.000`, `$50.000`, `50 mil`, `50k`, `20 lucas`, `1,5 millones`, `2 palos`, `1 millón 200 mil`. Si algo es ambiguo (`15.5`), pregunta en vez de adivinar.
 - **Categorías** iniciales (Trabajo, Ventas, **Juego**, Mercado, Servicios, Arriendo, Transporte, Salud, Gastos personales, Gastos por fuera, Hogar, Ropa, Familia, Deudas, Celular, Otros). Se pueden crear, renombrar, archivar y cambiar de ícono y color.
+- **Trabajo y clientes**: al anotar lo que entró se escribe el nombre del cliente. Si es nuevo, se crea solo, y si ya existe aparece de sugerencia para tocarlo. La pantalla **Trabajo** muestra cuánto cobró en la semana, el mes o el año, a cuántos clientes y cuánto pagó cada uno. La ficha de cada cliente trae su total, el último pago y su historial. "Doña Rosa", "DOÑA ROSA" y "Dona rosa" se reconocen como el mismo cliente.
 - **Juego**: sirve para entradas (lo que gana) y salidas (lo que juega). Hay una tarjeta aparte con ganado, jugado y si va ganando o perdiendo.
 - **Resúmenes**: te quedó / entró / salió, comparación con el período anterior, saldo total acumulado, lista agrupada por día, totales por categoría con porcentaje y gráfica por día o por mes.
 - **Sugerencias**: lo que más escribe en "¿en qué?" aparece para tocarlo, y trae su categoría.
@@ -35,19 +36,19 @@ El dinero siempre es `int` (pesos enteros) y las sumas las hace SQLite en 64 bit
 
 ```bash
 flutter analyze
-flutter test                       # 195 pruebas: unidad, contabilidad, seguridad, rendimiento, estrés, interfaz
+flutter test                       # 234 pruebas: unidad, contabilidad, seguridad, rendimiento, estrés, interfaz
 flutter test integration_test -d emulator-5554   # en Android: cifrado real + app completa
 ```
 
 | Carpeta | Qué prueba |
 |---|---|
 | `test/unit` | Lectura y formato de montos, fechas y períodos |
-| `test/datos` | Que la contabilidad cuadre al peso (incluye 2.000 movimientos al azar), papelera, categorías |
-| `test/seguridad` | Fuerza bruta del PIN, inyección SQL, datos imposibles en la base, copias manipuladas, inyección CSV, configuración Android |
+| `test/datos` | Que la contabilidad cuadre al peso (incluye 2.000 movimientos al azar), papelera, categorías, clientes, y que **actualizar desde la 1.0.0 no cambie ni un dato** |
+| `test/seguridad` | Fuerza bruta del PIN, inyección SQL, datos imposibles en la base, copias manipuladas o viejas (v1), inyección CSV, configuración Android |
 | `test/rendimiento` | Con 60.000 movimientos: inicio completo en ~20 ms, sugerencias en 5 ms |
 | `test/estres` | 500 guardados simultáneos, 3.000 operaciones al azar contra un modelo, montos máximos, fuzzing de montos, fechas y copias |
 | `test/widgets` | Flujos de mamá: primer uso, anotar, juego, períodos, papelera, salir sin guardar, bloqueo |
-| `integration_test` | En el celular: archivo cifrado ilegible sin llave, Keystore y app de punta a punta |
+| `integration_test` | En el celular: archivo cifrado ilegible sin llave, Keystore, migración de una base cifrada 1.0.0 y app de punta a punta |
 
 Herramientas (no son pruebas): `integration_test/herramientas/capturas.dart` (capturas con datos de ejemplo) y `tiempos.dart` (mide PIN y apertura de la base en modo profile).
 
@@ -59,5 +60,9 @@ flutter build apk --release --split-per-abi --obfuscate --split-debug-info=build
 
 - `app-arm64-v8a-release.apk`: casi todos los celulares de los últimos años.
 - `app-armeabi-v7a-release.apk`: celulares viejos de 32 bits.
+
+### Actualizar la app en el celular
+
+Una versión nueva se instala **encima** de la anterior y conserva todos los datos, siempre que esté firmada con la misma llave y tenga un `version:` mayor en `pubspec.yaml`. **Nunca desinstalar antes**, porque eso borra las cuentas. Las migraciones de la base (`lib/datos/base_datos.dart`) solo agregan; nunca borran.
 
 La firma usa `android/key.properties` (ignorado por git), que apunta a `../llaves/mis-cuentas.jks`. **Sin esa llave no se pueden publicar actualizaciones** de la app ya instalada: guarda una copia de la carpeta `llaves/` en un lugar seguro.

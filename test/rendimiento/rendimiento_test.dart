@@ -30,6 +30,7 @@ Future<int> medir(String nombre, Future<void> Function() f, {int veces = 5}) asy
 void main() {
   late Repositorio r;
   late List<int> cats;
+  late List<int> clientes;
 
   setUpAll(() async {
     r = await repoDePrueba();
@@ -37,12 +38,15 @@ void main() {
     final azar = Random(7);
     final descripciones = ['Mercado', 'Bus', 'Pan', 'Chance', 'Bingo', 'Arriendo', 'Luz', 'Agua', 'Droguería', 'Almuerzo'];
     final ahora = DateTime.now().toUtc().toIso8601String();
+    clientes = [for (var i = 0; i < 500; i++) (await r.guardarCliente(Cliente(nombre: 'Cliente número $i'))).id!];
     final sw = Stopwatch()..start();
     await r.db.transaction((t) async {
       final b = t.batch();
       for (var i = 0; i < cantidad; i++) {
+        final esCobro = i % 5 < 2; // 40 % son cobros a clientes
         b.insert('movimientos', {
-          'tipo': azar.nextInt(4) == 0 ? 'ingreso' : 'egreso',
+          'cliente_id': esCobro ? clientes[azar.nextInt(clientes.length)] : null,
+          'tipo': esCobro || azar.nextInt(4) == 0 ? 'ingreso' : 'egreso',
           'monto': 1000 + azar.nextInt(500000),
           'categoria_id': cats[azar.nextInt(cats.length)],
           'descripcion': '${descripciones[azar.nextInt(descripciones.length)]} ${azar.nextInt(50)}',
@@ -82,10 +86,24 @@ void main() {
   test('sugerencias al escribir', () async =>
       expect(await medir('sugerencias', () => r.sugerencias(TipoMovimiento.egreso, prefijo: 'Mer')), lessThan(250)));
 
+  test('trabajo: resumen y totales por cliente del año (500 clientes)', () async {
+    expect(await medir('trabajo año', () => r.resumenTrabajo(anio)), lessThan(80));
+    expect(await medir('totales por cliente año', () => r.totalesPorCliente(anio)), lessThan(120));
+  });
+  test('trabajo: sugerir clientes al escribir', () async =>
+      expect(await medir('clientes recientes', () => r.clientesRecientes(prefijo: 'número 4')), lessThan(150)));
+  test('trabajo: ficha de un cliente (historial completo)', () async {
+    expect(await medir('ficha cliente', () => Future.wait([
+          r.historialCliente(clientes[7]),
+          r.movimientos(Periodo.rango('2000-01-01', '2200-12-31'), clienteId: clientes[7], limite: 5000),
+        ])), lessThan(60));
+  });
+
   test('pantalla de inicio completa (todo lo que carga a la vez)', () async {
     final ms = await medir('inicio completo', () => Future.wait([
           r.resumen(mes), r.resumen(mes.mover(-1)), r.saldoHasta(mes.hasta), r.balanceJuego(mes),
           r.movimientos(mes, limite: 3000), r.totalesPorCategoria(mes), r.seriePorDia(mes), r.categorias(incluirArchivadas: true),
+          r.resumenTrabajo(mes), r.clientes(incluirArchivados: true),
         ]));
     expect(ms, lessThan(200));
   });

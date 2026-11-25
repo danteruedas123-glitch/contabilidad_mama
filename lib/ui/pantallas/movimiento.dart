@@ -40,7 +40,13 @@ class FormatoMiles extends TextInputFormatter {
 class PantallaMovimiento extends StatefulWidget {
   final TipoMovimiento tipo;
   final Movimiento? existente;
-  const PantallaMovimiento({super.key, required this.tipo, this.existente});
+
+  /// Abre el formulario para cobrar un trabajo: categoría Trabajo y, si se
+  /// pasa, el cliente ya elegido.
+  final bool deTrabajo;
+  final Cliente? clienteInicial;
+
+  const PantallaMovimiento({super.key, required this.tipo, this.existente, this.deTrabajo = false, this.clienteInicial});
 
   @override
   State<PantallaMovimiento> createState() => _PantallaMovimientoState();
@@ -50,6 +56,7 @@ class _PantallaMovimientoState extends State<PantallaMovimiento> {
   final _monto = TextEditingController();
   final _desc = TextEditingController();
   final _nota = TextEditingController();
+  final _cliente = TextEditingController();
   final _focoMonto = FocusNode();
   final _scroll = ScrollController();
 
@@ -65,7 +72,9 @@ class _PantallaMovimientoState extends State<PantallaMovimiento> {
 
   List<Categoria> _categorias = [];
   List<Sugerencia> _sugerencias = [];
+  List<Cliente> _clientesSug = [];
   Timer? _espera;
+  Timer? _esperaCli;
 
   bool get _editando => widget.existente != null;
 
@@ -82,10 +91,12 @@ class _PantallaMovimientoState extends State<PantallaMovimiento> {
       _categoriaId = e.categoriaId;
       _medio = e.medio;
     }
-    for (final c in [_monto, _desc, _nota]) {
+    if (widget.clienteInicial != null) _cliente.text = widget.clienteInicial!.nombre;
+    for (final c in [_monto, _desc, _nota, _cliente]) {
       c.addListener(_marcarCambio);
     }
     _desc.addListener(_pedirSugerencias);
+    _cliente.addListener(_pedirClientes);
   }
 
   @override
@@ -98,10 +109,45 @@ class _PantallaMovimientoState extends State<PantallaMovimiento> {
   Future<void> _cargar() async {
     final repo = context.servicios.repo;
     final cats = await repo.categorias(incluirArchivadas: true);
+    final clienteId = widget.existente?.clienteId;
+    final cliente = clienteId == null ? null : await repo.cliente(clienteId);
     if (!mounted) return;
-    setState(() => _categorias = cats);
+    setState(() {
+      _categorias = cats;
+      if (cliente != null && _cliente.text.isEmpty) {
+        _cliente.text = cliente.nombre;
+        _cambio = false; // cargar lo que ya estaba no es un cambio
+      }
+      if ((widget.deTrabajo || widget.clienteInicial != null) && _categoriaId == null) _categoriaId = _idTrabajo;
+    });
     _pedirSugerencias();
+    _pedirClientes();
   }
+
+  /// La categoría de trabajo (aunque mamá le haya cambiado el nombre).
+  int? get _idTrabajo => (_categorias.where((c) => c.icono == 'trabajo' && !c.archivada).firstOrNull ??
+          _categorias.where((c) => c.nombre.toLowerCase() == 'trabajo').firstOrNull)
+      ?.id;
+
+  void _pedirClientes() {
+    _esperaCli?.cancel();
+    _esperaCli = Timer(const Duration(milliseconds: 150), () async {
+      final c = await context.servicios.repo.clientesRecientes(prefijo: _cliente.text, limite: 6);
+      if (mounted) setState(() => _clientesSug = c);
+    });
+  }
+
+  void _elegirCliente(Cliente c) {
+    _cliente.text = c.nombre;
+    _cliente.selection = TextSelection.collapsed(offset: c.nombre.length);
+    if (_categoriaId == null) setState(() => _categoriaId = _idTrabajo);
+    _pedirSugerencias();
+    HapticFeedback.selectionClick();
+  }
+
+  /// ¿Lo escrito es un cliente que ya existe?
+  bool get _clienteExiste =>
+      _clientesSug.any((c) => c.nombre.toLowerCase() == limpiarNombre(_cliente.text).toLowerCase());
 
   void _marcarCambio() {
     if (!_cambio) setState(() => _cambio = true);
@@ -111,7 +157,7 @@ class _PantallaMovimientoState extends State<PantallaMovimiento> {
   void _pedirSugerencias() {
     _espera?.cancel();
     _espera = Timer(const Duration(milliseconds: 150), () async {
-      final s = await context.servicios.repo.sugerencias(_tipo, prefijo: _desc.text);
+      final s = await context.servicios.repo.sugerencias(_tipo, prefijo: _desc.text, categoriaId: _categoriaId);
       if (mounted) setState(() => _sugerencias = s.where((x) => x.descripcion != _desc.text).toList());
     });
   }
@@ -119,7 +165,8 @@ class _PantallaMovimientoState extends State<PantallaMovimiento> {
   @override
   void dispose() {
     _espera?.cancel();
-    for (final c in [_monto, _desc, _nota]) {
+    _esperaCli?.cancel();
+    for (final c in [_monto, _desc, _nota, _cliente]) {
       c.dispose();
     }
     _focoMonto.dispose();
@@ -182,11 +229,18 @@ class _PantallaMovimientoState extends State<PantallaMovimiento> {
       _focoMonto.requestFocus();
       return;
     }
+    final nombreCliente = _tipo == TipoMovimiento.ingreso ? limpiarNombre(_cliente.text) : '';
+    if (nombreCliente.length > maxNombreCliente) {
+      setState(() => _errorGeneral = 'El nombre del cliente es muy largo (máximo $maxNombreCliente letras)');
+      return;
+    }
+    final conCliente = nombreCliente.isNotEmpty;
     final m = Movimiento(
       id: widget.existente?.id,
       tipo: _tipo,
       monto: monto.valor!,
-      categoriaId: _categoriaId,
+      // Un cobro a un cliente sin categoría queda como Trabajo.
+      categoriaId: _categoriaId ?? (conCliente ? _idTrabajo : null),
       descripcion: _desc.text.trim(),
       nota: _nota.text.trim(),
       medio: _medio,
@@ -198,10 +252,12 @@ class _PantallaMovimientoState extends State<PantallaMovimiento> {
     });
     final s = context.servicios;
     try {
+      // Si escribió un cliente nuevo, se crea aquí mismo (sin pasos extra).
+      final listo = conCliente ? m.copiar(clienteId: (await s.repo.clienteParaNombre(nombreCliente)).id) : m.copiar(quitarCliente: true);
       if (_editando) {
-        await s.repo.actualizarMovimiento(m);
+        await s.repo.actualizarMovimiento(listo);
       } else {
-        await s.repo.agregarMovimiento(m);
+        await s.repo.agregarMovimiento(listo);
       }
       HapticFeedback.mediumImpact();
       if (!mounted) return;
@@ -211,7 +267,8 @@ class _PantallaMovimientoState extends State<PantallaMovimiento> {
           _monto.clear();
           _desc.clear();
           _nota.clear();
-          _categoriaId = null;
+          _cliente.clear();
+          _categoriaId = widget.deTrabajo ? _idTrabajo : null;
           _medio = null;
           _cambio = false;
           _intentoGuardar = false;
@@ -259,7 +316,11 @@ class _PantallaMovimientoState extends State<PantallaMovimiento> {
       },
       child: Scaffold(
         appBar: AppBar(
-          title: Text(_editando ? 'Editar movimiento' : (ingreso ? 'Anotar lo que entró' : 'Anotar lo que salió')),
+          title: Text(_editando
+              ? 'Editar movimiento'
+              : widget.deTrabajo && ingreso
+                  ? 'Cobro de trabajo'
+                  : (ingreso ? 'Anotar lo que entró' : 'Anotar lo que salió')),
           actions: [
             if (_editando)
               IconButton(tooltip: 'Enviar a la papelera', onPressed: _eliminar, icon: const Icon(Icons.delete_outline)),
@@ -324,6 +385,39 @@ class _PantallaMovimientoState extends State<PantallaMovimiento> {
               ),
               const SizedBox(height: 20),
 
+              // ---------------------------------------------------- cliente
+              if (ingreso) ...[
+                TextField(
+                  key: const ValueKey('campo-cliente'),
+                  controller: _cliente,
+                  maxLength: maxNombreCliente,
+                  textCapitalization: TextCapitalization.words,
+                  decoration: InputDecoration(
+                    labelText: 'Cliente (opcional)',
+                    hintText: '¿Quién te pagó? Ej: Doña Rosa',
+                    prefixIcon: const Icon(Icons.person_rounded),
+                    counterText: '',
+                    helperText: _cliente.text.trim().isNotEmpty && !_clienteExiste ? 'Cliente nuevo: se guarda solo al guardar' : null,
+                    suffixIcon: _cliente.text.isEmpty
+                        ? null
+                        : IconButton(tooltip: 'Quitar cliente', icon: const Icon(Icons.close_rounded), onPressed: _cliente.clear),
+                  ),
+                ),
+                if (_clientesSug.any((c) => c.nombre != _cliente.text)) ...[
+                  const SizedBox(height: 6),
+                  Wrap(spacing: 6, runSpacing: 0, children: [
+                    for (final c in _clientesSug.where((c) => c.nombre != _cliente.text))
+                      ActionChip(
+                        key: ValueKey('cliente-${c.nombre}'),
+                        avatar: const Icon(Icons.person_outline_rounded, size: 18),
+                        label: Text(c.nombre),
+                        onPressed: () => _elegirCliente(c),
+                      ),
+                  ]),
+                ],
+                const SizedBox(height: 20),
+              ],
+
               // ---------------------------------------------------- en qué
               TextField(
                 key: const ValueKey('campo-descripcion'),
@@ -332,7 +426,9 @@ class _PantallaMovimientoState extends State<PantallaMovimiento> {
                 textCapitalization: TextCapitalization.sentences,
                 decoration: InputDecoration(
                   labelText: ingreso ? '¿De qué? (opcional)' : '¿En qué? (opcional)',
-                  hintText: ingreso ? 'Ej: Pago de la quincena, ganó el bingo…' : 'Ej: Mercado, pasajes, droguería…',
+                  hintText: ingreso
+                      ? (_cliente.text.trim().isNotEmpty || widget.deTrabajo ? 'Ej: El trabajo que le hiciste' : 'Ej: Pago de la quincena, ganó el bingo…')
+                      : 'Ej: Mercado, pasajes, droguería…',
                   counterText: '',
                 ),
               ),
@@ -364,10 +460,13 @@ class _PantallaMovimientoState extends State<PantallaMovimiento> {
                     avatar: Icon(iconoDe(c.icono), size: 18, color: Color(c.color)),
                     label: Text(c.nombre),
                     selected: _categoriaId == c.id,
-                    onSelected: (s) => setState(() {
-                      _categoriaId = s ? c.id : null;
-                      _cambio = true;
-                    }),
+                    onSelected: (s) {
+                      setState(() {
+                        _categoriaId = s ? c.id : null;
+                        _cambio = true;
+                      });
+                      _pedirSugerencias();
+                    },
                   ),
                 ActionChip(
                   avatar: const Icon(Icons.add_rounded, size: 18),

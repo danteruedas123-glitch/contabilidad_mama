@@ -47,6 +47,18 @@ void main() {
     for (final (t, monto, cat, desc, dias, medio) in datos) {
       await r.agregarMovimiento(Movimiento(tipo: t, monto: monto, categoriaId: c[cat], descripcion: desc, fecha: d(dias), medio: medio));
     }
+    final cobros = <(String, int, String, int, MedioPago)>[
+      ('Doña Rosa', 85000, 'Arreglo de vestido', 12, MedioPago.nequi),
+      ('Doña Rosa', 40000, 'Ruedo de pantalón', 2, MedioPago.efectivo),
+      ('Marta Gómez', 150000, 'Uniformes del colegio', 6, MedioPago.banco),
+      ('Don Jairo', 60000, 'Cortinas', 4, MedioPago.nequi),
+      ('Lucía', 35000, '', 1, MedioPago.efectivo),
+    ];
+    for (final (cliente, monto, desc, dias, medio) in cobros) {
+      final cl = await r.clienteParaNombre(cliente);
+      await r.agregarMovimiento(Movimiento(
+          tipo: TipoMovimiento.ingreso, monto: monto, categoriaId: c['Trabajo'], clienteId: cl.id, descripcion: desc, fecha: d(dias), medio: medio));
+    }
     await db.close();
 
     app.main();
@@ -99,5 +111,23 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('abrir-ajustes')));
     await tester.pumpAndSettle();
     await binding.takeScreenshot('7-ajustes');
+    await tester.state<NavigatorState>(find.byType(Navigator).first).maybePop();
+    await tester.pumpAndSettle();
+
+    await tester.drag(find.byType(CustomScrollView), const Offset(0, 1500));
+    await tester.pumpAndSettle();
+    await binding.takeScreenshot('8-inicio-con-trabajo');
+    await tester.tap(find.byKey(const ValueKey('abrir-trabajo')));
+    await tester.pumpAndSettle(const Duration(seconds: 1));
+    await binding.takeScreenshot('9-trabajo');
+    await tester.tap(find.byKey(const ValueKey('total-cliente-Doña Rosa')));
+    await tester.pumpAndSettle(const Duration(seconds: 1));
+    await binding.takeScreenshot('10-cliente');
+    await tester.tap(find.byKey(const ValueKey('cobrar-a-cliente')));
+    await tester.pumpAndSettle(const Duration(seconds: 1));
+    await tester.enterText(find.byKey(const ValueKey('campo-monto')), '45000');
+    FocusManager.instance.primaryFocus?.unfocus();
+    await tester.pumpAndSettle(const Duration(seconds: 1));
+    await binding.takeScreenshot('11-cobro');
   });
 }

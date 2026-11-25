@@ -233,9 +233,9 @@ void main() {
       final bytes = generarCsv(movs, cats);
       expect(bytes.take(3), [0xEF, 0xBB, 0xBF]); // BOM: Excel lee bien las tildes
       final texto = utf8.decode(bytes);
-      expect(texto, contains('Fecha;Tipo;Valor;Valor con signo;Categoría'));
-      expect(texto, contains('2026-11-02;Salió;350000;-350000;Mercado y comida;Mercado del mes'));
-      expect(texto, contains('2026-11-01;Entró;1500000;1500000;Trabajo;Quincena'));
+      expect(texto, contains('Fecha;Tipo;Valor;Valor con signo;Categoría;Cliente'));
+      expect(texto, contains('2026-11-02;Salió;350000;-350000;Mercado y comida;;Mercado del mes'));
+      expect(texto, contains('2026-11-01;Entró;1500000;1500000;Trabajo;;Quincena'));
       expect(texto, isNot(contains('En papelera')));
       final m = Movimiento(tipo: TipoMovimiento.egreso, monto: 1, fecha: '2026-11-01', descripcion: '=1+1');
       expect(utf8.decode(generarCsv([m], cats)), contains(";'=1+1;"));

@@ -35,6 +35,7 @@ class _PantallaListaState extends State<PantallaLista> {
   final _texto = TextEditingController();
   List<Movimiento>? _movs;
   Map<int, Categoria> _cats = {};
+  Map<int, Cliente> _clientes = {};
   Timer? _espera;
   late Repositorio _repo;
   bool _iniciado = false;
@@ -58,6 +59,7 @@ class _PantallaListaState extends State<PantallaLista> {
 
   Future<void> _cargar() async {
     final cats = {for (final c in await _repo.categorias(incluirArchivadas: true)) c.id!: c};
+    final clientes = {for (final c in await _repo.clientes(incluirArchivados: true)) c.id!: c};
     List<Movimiento> movs;
     if (widget.esBusqueda) {
       movs = _texto.text.trim().isEmpty ? [] : await _repo.buscar(_texto.text);
@@ -69,6 +71,7 @@ class _PantallaListaState extends State<PantallaLista> {
     if (!mounted) return;
     setState(() {
       _cats = cats;
+      _clientes = clientes;
       _movs = movs;
     });
   }
@@ -91,7 +94,7 @@ class _PantallaListaState extends State<PantallaLista> {
                 maxLength: 60,
                 onChanged: _buscar,
                 decoration: const InputDecoration(
-                  hintText: 'Buscar: mercado, bingo, Nequi…',
+                  hintText: 'Buscar: mercado, bingo, un cliente…',
                   border: InputBorder.none,
                   filled: false,
                   counterText: '',
@@ -124,6 +127,7 @@ class _PantallaListaState extends State<PantallaLista> {
                     return FilaMovimiento(
                       m: m,
                       categoria: _cats[m.categoriaId],
+                      cliente: _clientes[m.clienteId],
                       mostrarFecha: true,
                       onTap: () => Navigator.of(context).push(
                         MaterialPageRoute(builder: (_) => PantallaMovimiento(tipo: m.tipo, existente: m)),

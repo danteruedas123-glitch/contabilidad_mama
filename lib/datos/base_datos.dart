@@ -12,13 +12,23 @@ import '../core/dinero.dart';
 import 'categorias_iniciales.dart';
 import 'modelos.dart';
 
-const versionEsquema = 1;
+/// v1: categorías, movimientos, ajustes.
+/// v2: clientes (trabajo) y movimientos.cliente_id.
+const versionEsquema = 2;
 
 Future<void> configurarBD(Database db) async {
   await db.execute('PRAGMA foreign_keys = ON');
 }
 
+/// Instalación nueva: se crea la v1 y se aplican las mismas migraciones que
+/// recibe un celular que actualiza. Así el esquema es idéntico en ambos casos.
 Future<void> crearBD(Database db, int version) async {
+  await crearEsquemaV1(db);
+  await actualizarBD(db, 1, version);
+}
+
+/// Esquema de la versión 1.0.0 (no cambiar: lo usan las pruebas de migración).
+Future<void> crearEsquemaV1(Database db) async {
   final b = db.batch();
   b.execute('''
     CREATE TABLE categorias (
@@ -61,8 +71,28 @@ Future<void> crearBD(Database db, int version) async {
   await b.commit(noResult: true);
 }
 
+/// Migraciones. Regla: solo se AGREGA (tablas, columnas, índices); nunca se
+/// borra ni se reescribe un dato de mamá. sqflite corre esto dentro de una
+/// transacción: si algo falla, la base queda como estaba.
 Future<void> actualizarBD(Database db, int anterior, int nueva) async {
-  // Aquí irán las migraciones futuras (v2, v3...). Nunca borrar datos.
+  if (anterior < 2) await _migrarAV2(db);
+}
+
+Future<void> _migrarAV2(Database db) async {
+  await db.execute('''
+    CREATE TABLE clientes (
+      id        INTEGER PRIMARY KEY AUTOINCREMENT,
+      nombre    TEXT    NOT NULL CHECK (length(trim(nombre)) BETWEEN 1 AND $maxNombreCliente),
+      clave     TEXT    NOT NULL UNIQUE CHECK (length(clave) BETWEEN 1 AND $maxNombreCliente),
+      telefono  TEXT    NOT NULL DEFAULT '' CHECK (length(telefono) <= $maxTelefono),
+      nota      TEXT    NOT NULL DEFAULT '' CHECK (length(nota) <= $maxNotaCliente),
+      archivado INTEGER NOT NULL DEFAULT 0 CHECK (archivado IN (0,1)),
+      creado_en TEXT    NOT NULL
+    )''');
+  // "clave" = nombre normalizado en Dart (minúsculas Unicode y sin tildes):
+  // lower() de SQLite no entiende la Ñ ni las tildes.
+  await db.execute('ALTER TABLE movimientos ADD COLUMN cliente_id INTEGER REFERENCES clientes(id) ON DELETE RESTRICT');
+  await db.execute('CREATE INDEX ix_mov_cliente ON movimientos (cliente_id, fecha)');
 }
 
 /// Opciones comunes para abrir la base (las usa la app y las pruebas).

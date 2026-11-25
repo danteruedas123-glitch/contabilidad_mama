@@ -145,7 +145,8 @@ class _PantallaAjustesState extends State<PantallaAjustes> {
     if (opcion == null || !mounted) return;
     final movs = await s.repo.movimientos(opcion, limite: 20000);
     final cats = {for (final c in await s.repo.categorias(incluirArchivadas: true)) c.id!: c};
-    final bytes = Uint8List.fromList(generarCsv(movs.reversed.toList(), cats));
+    final clientes = {for (final c in await s.repo.clientes(incluirArchivados: true)) c.id!: c};
+    final bytes = Uint8List.fromList(generarCsv(movs.reversed.toList(), cats, clientes: clientes));
     if (!mounted) return;
     await compartirArchivo(context, 'MisCuentas_${opcion.desde}_a_${opcion.hasta}.csv', bytes, 'text/csv',
         aviso: 'El archivo de Excel NO va cifrado: compártelo solo con quien confíes.');
@@ -222,7 +223,7 @@ class _PantallaAjustesState extends State<PantallaAjustes> {
           title: Text('Funciona sin internet'),
           subtitle: Text('Tus cuentas están cifradas y guardadas solo en este celular. Nada se envía a ningún lado.'),
         ),
-        const ListTile(leading: Icon(Icons.info_outline), title: Text('Mis Cuentas'), subtitle: Text('Versión 1.0.0 · Pesos colombianos (COP)')),
+        const ListTile(leading: Icon(Icons.info_outline), title: Text('Mis Cuentas'), subtitle: Text('Versión 1.1.0 · Pesos colombianos (COP)')),
         const SizedBox(height: 24),
       ]),
     );
@@ -485,6 +486,7 @@ class PantallaPapelera extends StatefulWidget {
 class _PantallaPapeleraState extends State<PantallaPapelera> {
   List<Movimiento>? _movs;
   Map<int, Categoria> _cats = {};
+  Map<int, Cliente> _clientes = {};
 
   @override
   void didChangeDependencies() {
@@ -496,10 +498,12 @@ class _PantallaPapeleraState extends State<PantallaPapelera> {
     final repo = context.servicios.repo;
     final movs = await repo.papelera();
     final cats = {for (final c in await repo.categorias(incluirArchivadas: true)) c.id!: c};
+    final clientes = {for (final c in await repo.clientes(incluirArchivados: true)) c.id!: c};
     if (mounted) {
       setState(() {
         _movs = movs;
         _cats = cats;
+        _clientes = clientes;
       });
     }
   }
@@ -560,7 +564,7 @@ class _PantallaPapeleraState extends State<PantallaPapelera> {
               ? const Vacio(icono: Icons.delete_outline_rounded, texto: 'La papelera está vacía.')
               : ListView.builder(
                   itemCount: movs.length,
-                  itemBuilder: (c, i) => FilaMovimiento(m: movs[i], categoria: _cats[movs[i].categoriaId], mostrarFecha: true, onTap: () => _opciones(movs[i])),
+                  itemBuilder: (c, i) => FilaMovimiento(m: movs[i], categoria: _cats[movs[i].categoriaId], cliente: _clientes[movs[i].clienteId], mostrarFecha: true, onTap: () => _opciones(movs[i])),
                 ),
     );
   }

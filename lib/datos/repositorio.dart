@@ -91,6 +91,118 @@ class Repositorio extends ChangeNotifier {
   Future<int> usosCategoria(int id) async =>
       _primerEntero(await db.rawQuery('SELECT count(*) FROM movimientos WHERE categoria_id = ? AND eliminado_en IS NULL', [id])) ?? 0;
 
+  // ------------------------------------------------------------ clientes
+
+  Future<List<Cliente>> clientes({bool incluirArchivados = false}) async {
+    final filas = await db.query('clientes', where: incluirArchivados ? null : 'archivado = 0', orderBy: 'nombre COLLATE NOCASE');
+    return filas.map(Cliente.deMapa).toList();
+  }
+
+  Future<Cliente?> cliente(int id) async {
+    final f = await db.query('clientes', where: 'id = ?', whereArgs: [id], limit: 1);
+    return f.isEmpty ? null : Cliente.deMapa(f.first);
+  }
+
+  /// Busca un cliente por nombre sin importar mayúsculas ni espacios de más.
+  Future<Cliente?> clientePorNombre(String nombre) async {
+    final f = await db.query('clientes', where: 'clave = ?', whereArgs: [claveNombre(nombre)], limit: 1);
+    return f.isEmpty ? null : Cliente.deMapa(f.first);
+  }
+
+  /// Clientes para sugerir al anotar: primero los que más recientemente le
+  /// han pagado; con [prefijo], los que contienen ese texto.
+  Future<List<Cliente>> clientesRecientes({String prefijo = '', int limite = 8}) async {
+    final p = claveNombre(prefijo);
+    final seguro = p.replaceAll(r'\', r'\\').replaceAll('%', r'\%').replaceAll('_', r'\_');
+    final filas = await db.rawQuery(r'''
+      SELECT c.*, max(m.id) AS ultimo
+      FROM clientes c LEFT JOIN movimientos m ON m.cliente_id = c.id AND m.eliminado_en IS NULL
+      WHERE c.archivado = 0 AND c.clave LIKE ? ESCAPE '\'
+      GROUP BY c.id
+      ORDER BY ultimo IS NULL, ultimo DESC, c.nombre COLLATE NOCASE
+      LIMIT ?''', ['%$seguro%', limite]);
+    return filas.map(Cliente.deMapa).toList();
+  }
+
+  Future<Cliente> guardarCliente(Cliente c) async {
+    final limpio = c.copiar(nombre: limpiarNombre(c.nombre), telefono: c.telefono.trim(), nota: c.nota.trim());
+    final error = validarCliente(limpio);
+    if (error != null) throw ErrorDatos(error);
+    try {
+      if (limpio.id == null) {
+        final ahora = _ahora();
+        final id = await db.insert('clientes', {...limpio.aMapa(), 'creado_en': ahora});
+        _cambio();
+        return Cliente.deMapa({...limpio.aMapa(), 'id': id, 'creado_en': ahora});
+      }
+      final mapa = limpio.aMapa()..remove('creado_en');
+      final n = await db.update('clientes', mapa, where: 'id = ?', whereArgs: [limpio.id]);
+      if (n == 0) throw const ErrorDatos('Ese cliente ya no existe');
+      _cambio();
+      return limpio;
+    } on DatabaseException catch (e) {
+      if (e.isUniqueConstraintError()) throw ErrorDatos('Ya tienes un cliente llamado "${limpio.nombre}"');
+      rethrow;
+    }
+  }
+
+  /// Si ya existe un cliente con ese nombre lo devuelve; si no, lo crea.
+  /// Así mamá solo escribe el nombre y la app se encarga del resto.
+  Future<Cliente> clienteParaNombre(String nombre) async {
+    final existente = await clientePorNombre(nombre);
+    if (existente != null) {
+      if (existente.archivado) return guardarCliente(existente.copiar(archivado: false));
+      return existente;
+    }
+    return guardarCliente(Cliente(nombre: nombre));
+  }
+
+  Future<void> archivarCliente(int id, {bool archivar = true}) async {
+    await db.update('clientes', {'archivado': archivar ? 1 : 0}, where: 'id = ?', whereArgs: [id]);
+    _cambio();
+  }
+
+  /// Solo se borra un cliente sin movimientos; si tiene, se archiva.
+  Future<void> eliminarCliente(int id) async {
+    final usos = _primerEntero(await db.rawQuery('SELECT count(*) FROM movimientos WHERE cliente_id = ?', [id])) ?? 0;
+    if (usos > 0) {
+      throw ErrorDatos('Este cliente tiene $usos movimiento${usos == 1 ? '' : 's'}. Puedes archivarlo para que no salga más.');
+    }
+    await db.delete('clientes', where: 'id = ?', whereArgs: [id]);
+    _cambio();
+  }
+
+  /// Lo cobrado a clientes en el período (solo entradas con cliente).
+  Future<ResumenTrabajo> resumenTrabajo(Periodo p) async {
+    final f = (await db.rawQuery('''
+      SELECT coalesce(sum(monto), 0) AS total, count(*) AS cobros, count(DISTINCT cliente_id) AS clientes
+      FROM movimientos
+      WHERE eliminado_en IS NULL AND tipo = 'ingreso' AND cliente_id IS NOT NULL AND fecha BETWEEN ? AND ?''',
+        [p.desde, p.hasta])).first;
+    return ResumenTrabajo(f['total'] as int, f['cobros'] as int, f['clientes'] as int);
+  }
+
+  /// Cuánto pagó cada cliente en el período, de mayor a menor.
+  Future<List<TotalCliente>> totalesPorCliente(Periodo p) async {
+    final filas = await db.rawQuery('''
+      SELECT c.*, sum(m.monto) AS total, count(*) AS cobros, max(m.fecha) AS ultima
+      FROM movimientos m JOIN clientes c ON c.id = m.cliente_id
+      WHERE m.eliminado_en IS NULL AND m.tipo = 'ingreso' AND m.fecha BETWEEN ? AND ?
+      GROUP BY c.id
+      ORDER BY total DESC''', [p.desde, p.hasta]);
+    return filas
+        .map((f) => TotalCliente(Cliente.deMapa(f), f['total'] as int, f['cobros'] as int, f['ultima'] as String?))
+        .toList();
+  }
+
+  /// Lo que ha pagado un cliente en toda la historia.
+  Future<({int total, int cobros, String? primera, String? ultima})> historialCliente(int id) async {
+    final f = (await db.rawQuery('''
+      SELECT coalesce(sum(monto), 0) AS total, count(*) AS cobros, min(fecha) AS primera, max(fecha) AS ultima
+      FROM movimientos WHERE eliminado_en IS NULL AND tipo = 'ingreso' AND cliente_id = ?''', [id])).first;
+    return (total: f['total'] as int, cobros: f['cobros'] as int, primera: f['primera'] as String?, ultima: f['ultima'] as String?);
+  }
+
   // ------------------------------------------------------------ movimientos
 
   Future<int> agregarMovimiento(Movimiento m) async {
@@ -164,12 +276,13 @@ class Repositorio extends ChangeNotifier {
     Periodo p, {
     TipoMovimiento? tipo,
     int? categoriaId,
+    int? clienteId,
     String? texto,
     int limite = 2000,
   }) async {
     final where = <String>['eliminado_en IS NULL', 'fecha BETWEEN ? AND ?'];
     final args = <Object?>[p.desde, p.hasta];
-    _filtros(where, args, tipo: tipo, categoriaId: categoriaId, texto: texto);
+    _filtros(where, args, tipo: tipo, categoriaId: categoriaId, clienteId: clienteId, texto: texto);
     final filas = await db.query(
       'movimientos',
       where: where.join(' AND '),
@@ -180,7 +293,7 @@ class Repositorio extends ChangeNotifier {
     return filas.map(Movimiento.deMapa).toList();
   }
 
-  /// Búsqueda en toda la historia por lo escrito en "¿en qué?" o en la nota.
+  /// Búsqueda en toda la historia por "¿en qué?", la nota o el nombre del cliente.
   Future<List<Movimiento>> buscar(String texto, {int limite = 300}) async {
     final where = <String>['eliminado_en IS NULL'];
     final args = <Object?>[];
@@ -190,7 +303,7 @@ class Repositorio extends ChangeNotifier {
     return filas.map(Movimiento.deMapa).toList();
   }
 
-  void _filtros(List<String> where, List<Object?> args, {TipoMovimiento? tipo, int? categoriaId, String? texto}) {
+  void _filtros(List<String> where, List<Object?> args, {TipoMovimiento? tipo, int? categoriaId, int? clienteId, String? texto}) {
     if (tipo != null) {
       where.add('tipo = ?');
       args.add(tipo.clave);
@@ -199,12 +312,17 @@ class Repositorio extends ChangeNotifier {
       where.add('categoria_id = ?');
       args.add(categoriaId);
     }
+    if (clienteId != null) {
+      where.add('cliente_id = ?');
+      args.add(clienteId);
+    }
     final t = texto?.trim() ?? '';
     if (t.isNotEmpty) {
       // Los comodines de LIKE se escapan: buscar "%" encuentra un "%" de verdad.
       final seguro = t.substring(0, t.length.clamp(0, 60)).replaceAll(r'\', r'\\').replaceAll('%', r'\%').replaceAll('_', r'\_');
-      where.add(r"(descripcion LIKE ? ESCAPE '\' OR nota LIKE ? ESCAPE '\')");
-      args..add('%$seguro%')..add('%$seguro%');
+      where.add(r"(descripcion LIKE ? ESCAPE '\' OR nota LIKE ? ESCAPE '\' "
+          r"OR cliente_id IN (SELECT id FROM clientes WHERE nombre LIKE ? ESCAPE '\'))");
+      args..add('%$seguro%')..add('%$seguro%')..add('%$seguro%');
     }
   }
 
@@ -299,7 +417,9 @@ class Repositorio extends ChangeNotifier {
   }
 
   /// Lo que más ha escrito antes en "¿en qué?", para no tener que escribirlo otra vez.
-  Future<List<Sugerencia>> sugerencias(TipoMovimiento tipo, {String prefijo = '', int limite = 8}) async {
+  /// Con [categoriaId], primero salen las que ya se usaron en esa categoría
+  /// (por ejemplo, en Trabajo los trabajos y no "Ganó el bingo").
+  Future<List<Sugerencia>> sugerencias(TipoMovimiento tipo, {String prefijo = '', int? categoriaId, int limite = 8}) async {
     final p = prefijo.trim();
     final seguro = p.replaceAll(r'\', r'\\').replaceAll('%', r'\%').replaceAll('_', r'\_');
     // Una sola pasada: en SQLite, con max(id) las demás columnas salen de esa
@@ -309,8 +429,8 @@ class Repositorio extends ChangeNotifier {
       FROM movimientos INDEXED BY ix_mov_desc
       WHERE eliminado_en IS NULL AND tipo = ? AND descripcion <> '' AND descripcion LIKE ? ESCAPE '\'
       GROUP BY descripcion
-      ORDER BY veces DESC, ultimo DESC
-      LIMIT ?''', [tipo.clave, '$seguro%', limite]);
+      ORDER BY max(categoria_id IS ?) DESC, veces DESC, ultimo DESC
+      LIMIT ?''', [tipo.clave, '$seguro%', categoriaId ?? -1, limite]);
     return filas.map((f) => Sugerencia(f['descripcion'] as String, f['categoria_id'] as int?, f['veces'] as int)).toList();
   }
 
@@ -343,7 +463,7 @@ class Repositorio extends ChangeNotifier {
 
   ErrorDatos _traducir(DatabaseException e) {
     final t = e.toString();
-    if (t.contains('FOREIGN KEY')) return const ErrorDatos('La categoría elegida ya no existe');
+    if (t.contains('FOREIGN KEY')) return const ErrorDatos('La categoría o el cliente elegido ya no existe');
     if (t.contains('CHECK')) return const ErrorDatos('Algún dato no es válido. Revisa el valor y la fecha.');
     return ErrorDatos('No se pudo guardar: ${e.runtimeType}');
   }
